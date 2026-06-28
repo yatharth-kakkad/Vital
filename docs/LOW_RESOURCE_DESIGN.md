@@ -40,6 +40,8 @@ The `training/` directory provides a transfer-learning pipeline for future model
 
 For this app's low-resource narrative, small transfer-learned and quantized models are a better fit than training large models from scratch.
 
+See `docs/DATASET_SELECTION.md` for the current dataset-fit decision. In short: skin replacement training is plausible with ISIC-style data, but eye replacement training is blocked until the eye capture modality is clarified.
+
 ## Safety Boundary
 
 The app should be described as disease identification support or triage assistance, not automated diagnosis. Any elevated or uncertain signal should route the patient to a qualified clinician.

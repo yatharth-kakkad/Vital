@@ -53,6 +53,7 @@ The app requests camera access at runtime. Captured images are written to the ap
 - `app/src/main/ml/` contains the TensorFlow Lite models.
 - `app/src/main/res/xml/file_paths.xml` defines cache access for camera captures.
 - `docs/LOW_RESOURCE_DESIGN.md` documents the low-resource deployment decisions.
+- `docs/DATASET_SELECTION.md` explains why replacement models require modality-matched datasets.
 - `training/` contains a reproducible transfer-learning pipeline for future model improvements.
 - `docs/MODEL_CARD.md` is the required review template before replacing app models.
 
