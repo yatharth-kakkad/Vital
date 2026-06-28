@@ -64,27 +64,23 @@ import com.canhub.cropper.CropImageContract
 import com.canhub.cropper.CropImageContractOptions
 import com.canhub.cropper.CropImageOptions
 import com.canhub.cropper.CropImageView
-import com.example.detector.ml.Dataprep
 import com.example.detector.ml.Eyescorer
-import com.example.detector.ml.Predictor
-import com.example.detector.ml.ScorerMob
-import com.example.detector.ml.ScorerRes
+import com.example.detector.ml.SkinTriage
 import com.example.detector.ui.theme.DetectorTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.tensorflow.lite.DataType
-import org.tensorflow.lite.support.common.ops.NormalizeOp
 import org.tensorflow.lite.support.image.ImageProcessor
 import org.tensorflow.lite.support.image.TensorImage
 import org.tensorflow.lite.support.image.ops.ResizeOp
-import org.tensorflow.lite.support.tensorbuffer.TensorBuffer
 import java.io.File
 import kotlin.math.min
 import kotlin.system.measureTimeMillis
 
 private const val IMAGE_SIZE = 224
 private const val FILE_PROVIDER_AUTHORITY = "com.example.detector.provider"
+private const val SKIN_REFERRAL_THRESHOLD = 0.405f
 
 enum class AnalysisMode(val label: String) {
     SKIN("Skin"),
@@ -531,44 +527,24 @@ private fun assessmentFor(score: Float): Assessment = when {
 }
 
 fun runSkinModel(context: Context, bitmap: Bitmap): Float {
-    var dataprep: Dataprep? = null
-    var predictor: Predictor? = null
-    var scorerMob: ScorerMob? = null
-    var scorerRes: ScorerRes? = null
+    var skinTriage: SkinTriage? = null
 
     return try {
-        val normalizedImage = bitmap.toTensorImage(normalize = true)
-        val scoringImage = bitmap.toTensorImage(normalize = false)
+        val image = bitmap.toTensorImage()
+        skinTriage = SkinTriage.newInstance(context)
+        val referralProbability = skinTriage
+            .process(image.tensorBuffer)
+            .outputFeature0AsTensorBuffer
+            .floatArray
+            .firstOrNull()
+            ?: 0f
 
-        dataprep = Dataprep.newInstance(context)
-        val embedding = dataprep.process(normalizedImage.tensorBuffer).outputFeature0AsTensorBuffer
-
-        val predictorInput = TensorBuffer.createFixedSize(intArrayOf(1, 512), DataType.FLOAT32)
-        predictorInput.loadArray(embedding.floatArray)
-
-        predictor = Predictor.newInstance(context)
-        val predictorOutput = predictor.process(predictorInput).outputFeature0AsTensorBuffer.floatArray
-
-        scorerMob = ScorerMob.newInstance(context)
-        val mobScore = scorerMob.process(scoringImage.tensorBuffer).outputFeature0AsTensorBuffer.floatArray
-
-        scorerRes = ScorerRes.newInstance(context)
-        val resScore = scorerRes.process(scoringImage.tensorBuffer).outputFeature0AsTensorBuffer.floatArray
-
-        val scoringTable = floatArrayOf(8f, 3f, 1f, 0f, 22f, 1f, 1f)
-        val weightedMob = weightedSum(mobScore, scoringTable)
-        val weightedRes = weightedSum(resScore, scoringTable)
-        val predictorConfidence = predictorOutput.firstOrNull() ?: 0f
-
-        if (predictorConfidence > 0f) weightedRes else (weightedMob + weightedRes) / 2f
+        ((referralProbability.coerceIn(0f, 1f) / SKIN_REFERRAL_THRESHOLD) * 5f).coerceIn(0f, 10f)
     } catch (e: Exception) {
         e.printStackTrace()
         0f
     } finally {
-        dataprep?.close()
-        predictor?.close()
-        scorerMob?.close()
-        scorerRes?.close()
+        skinTriage?.close()
     }
 }
 
@@ -576,11 +552,11 @@ fun runEyeModel(context: Context, bitmap: Bitmap): Float {
     var eyeScorer: Eyescorer? = null
 
     return try {
-        val eyeTensorImage = bitmap.toTensorImage(normalize = false)
+        val eyeTensorImage = bitmap.toTensorImage()
         eyeScorer = Eyescorer.newInstance(context)
         val eyeScores = eyeScorer.process(eyeTensorImage.tensorBuffer).outputFeature0AsTensorBuffer.floatArray
 
-        weightedSum(eyeScores, floatArrayOf(5f, 10f, 1f, 8f))
+        weightedSum(eyeScores, floatArrayOf(7f, 9f, 8f, 0f))
     } catch (e: Exception) {
         e.printStackTrace()
         0f
@@ -589,17 +565,14 @@ fun runEyeModel(context: Context, bitmap: Bitmap): Float {
     }
 }
 
-private fun Bitmap.toTensorImage(normalize: Boolean): TensorImage {
-    val processorBuilder = ImageProcessor.Builder()
+private fun Bitmap.toTensorImage(): TensorImage {
+    val processor = ImageProcessor.Builder()
         .add(ResizeOp(IMAGE_SIZE, IMAGE_SIZE, ResizeOp.ResizeMethod.BILINEAR))
-
-    if (normalize) {
-        processorBuilder.add(NormalizeOp(0.0f, 255.0f))
-    }
+        .build()
 
     var image = TensorImage(DataType.FLOAT32)
     image.load(this)
-    return processorBuilder.build().process(image)
+    return processor.process(image)
 }
 
 private fun weightedSum(scores: FloatArray, weights: FloatArray): Float {

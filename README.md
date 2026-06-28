@@ -54,6 +54,7 @@ The app requests camera access at runtime. Captured images are written to the ap
 - `app/src/main/res/xml/file_paths.xml` defines cache access for camera captures.
 - `docs/LOW_RESOURCE_DESIGN.md` documents the low-resource deployment decisions.
 - `docs/DATASET_SELECTION.md` explains why replacement models require modality-matched datasets.
+- `docs/EXPERIMENTAL_MODEL_RESULTS.md` documents the current scaffold-generated model replacements.
 - `training/` contains a reproducible transfer-learning pipeline for future model improvements.
 - `docs/MODEL_CARD.md` is the required review template before replacing app models.
 
@@ -62,4 +63,4 @@ The app requests camera access at runtime. Captured images are written to the ap
 - The included models are bundled directly in the app, which makes the repository and APK large.
 - The score thresholds are simple and should be calibrated against validated datasets before any real-world use.
 - The app does not yet include multilingual copy, offline training material, or patient record export.
-- The training pipeline is a reproducible baseline; it does not make the included models clinically validated.
+- The included replacement models were generated with the training scaffold, but they are experimental and not clinically validated.

@@ -1,6 +1,8 @@
-# Model Card
+# Model Card Template
 
 This model card should be completed before replacing any model under `app/src/main/ml/`.
+
+The current experimental replacements are documented in `docs/EXPERIMENTAL_MODEL_RESULTS.md`.
 
 ## Model Details
 

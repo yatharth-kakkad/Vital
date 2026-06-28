@@ -1,10 +1,10 @@
 # Dataset Selection for Replacement Models
 
-This note records why Vital does not currently include newly trained replacement models, even though the repo now has a training pipeline.
+This note records the dataset-fit caveats for Vital's scaffold-generated replacement models.
 
 ## Summary
 
-Training technically better `.tflite` files is plausible for the skin path, but not as a quick, responsible one-shot replacement for both skin and eye models.
+Training technically better `.tflite` files is plausible, but the resulting files remain experimental unless the dataset matches the app's capture setting and the model passes stronger validation.
 
 The blocker is not the training code. The blocker is dataset fit:
 
@@ -13,7 +13,7 @@ The blocker is not the training code. The blocker is dataset fit:
 - Credible public eye datasets are usually retinal/fundus datasets, not visible-eye phone photos.
 - A retinal model would not be a drop-in replacement for a normal camera eye-screening flow.
 
-Replacing the app models should wait until the dataset matches the capture modality and intended deployment environment.
+Vital now includes scaffold-generated experimental replacements. They should be treated as prototypes, not validated medical models.
 
 ## Skin Data Candidates
 
@@ -59,6 +59,6 @@ A replacement model can be considered only when all of the following are true:
 
 ## Practical Next Step
 
-Run a skin-only baseline first using the training scaffold and ISIC data. Treat the resulting model as an experiment, not a replacement, until the model card shows credible held-out performance.
+Retrain the skin model with a larger ISIC sample or a phone-camera clinical image dataset, then compare against the current experimental model in `docs/EXPERIMENTAL_MODEL_RESULTS.md`.
 
-For eye screening, do not train from fundus datasets unless the app is changed to require fundus images.
+For eye screening, continue using the Kaggle eye-disease dataset lineage unless a more representative visible-eye dataset is available.
