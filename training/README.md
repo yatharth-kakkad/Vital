@@ -1,6 +1,6 @@
 # Training Pipeline
 
-This directory contains a reproducible baseline pipeline for training better lightweight models for Vital without changing the current Android app behavior.
+This directory trains the small TensorFlow Lite models bundled by Vital without changing the Android app contract.
 
 The pipeline is intentionally conservative:
 
@@ -30,6 +30,27 @@ Required columns:
 
 Optional columns such as `source`, `skin_tone`, `device`, `site`, or `country` are preserved for future subgroup checks.
 
+For skin triage, use the requested Kaggle dataset and build the binary manifest:
+
+```bash
+python - <<'PY'
+import kagglehub
+print(kagglehub.dataset_download("ismailpromus/skin-diseases-image-dataset"))
+PY
+
+python build_skin_manifest.py \
+  --dataset-root ~/.cache/kagglehub/datasets/ismailpromus/skin-diseases-image-dataset/versions/1/IMG_CLASSES \
+  --output manifests/skin_kaggle.csv \
+  --max-per-diagnosis 1500 \
+  --max-per-label 3000
+python validate_manifest.py \
+  --manifest manifests/skin_kaggle.csv \
+  --dataset-root ~/.cache/kagglehub/datasets/ismailpromus/skin-diseases-image-dataset/versions/1/IMG_CLASSES \
+  --skip-image-check
+```
+
+`build_skin_manifest.py` maps class folders with referral keywords such as melanoma, basal, carcinoma, or BCC to `referral`; the remaining folders become `lower_signal`. Review the generated `diagnosis` column before training if the dataset changes layout.
+
 For the app narrative, a binary triage dataset is the simplest responsible starting point:
 
 - `lower_signal`
@@ -47,8 +68,8 @@ pip install -r requirements.txt
 
 python validate_manifest.py --manifest /path/to/manifest.csv --dataset-root /path/to/images
 python train_mobile_triage.py \
-  --manifest /path/to/manifest.csv \
-  --dataset-root /path/to/images \
+  --manifest manifests/skin_kaggle.csv \
+  --dataset-root ~/.cache/kagglehub/datasets/ismailpromus/skin-diseases-image-dataset/versions/1/IMG_CLASSES \
   --output-dir runs/skin_baseline \
   --positive-label referral \
   --epochs 20 \
@@ -71,7 +92,7 @@ Do not overwrite app models just because a training run completes. Before replac
 1. Confirm test performance on held-out data.
 2. Check sensitivity at a referral-friendly threshold.
 3. Review subgroup behavior where metadata exists.
-4. Fill out `docs/MODEL_CARD.md`.
+4. Record the run in `docs/EXPERIMENTAL_MODEL_RESULTS.md`.
 5. Add the new `.tflite` model and update Android inference code if input/output shapes changed.
 
 ## Why Transfer Learning

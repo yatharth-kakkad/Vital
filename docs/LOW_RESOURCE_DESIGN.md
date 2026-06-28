@@ -12,14 +12,10 @@ Vital is framed as a field triage prototype for settings where bandwidth, device
 
 ## Model Pipeline
 
-Skin analysis uses a two-stage path:
+Both analysis paths use one 224 x 224 crop, one bundled TensorFlow Lite model, and a small score mapping in the app:
 
-1. Resize and normalize the crop for the embedding model.
-2. Feed the embedding into the predictor.
-3. Resize the same crop for the scoring models.
-4. Combine scorer outputs with the existing weighting table.
-
-Eye analysis uses the eye scorer directly on the fixed crop and weighting table.
+- Skin: MobileNetV3Small triage model trained from a balanced subset of `ismailpromus/skin-diseases-image-dataset`; referral probability is scaled against the documented referral threshold.
+- Eye: MobileNetV3Small classifier trained with the same training script and converted to the same dynamic-range TFLite format.
 
 The model instances are closed in `finally` blocks so repeated screening sessions do not leak native resources.
 
@@ -35,12 +31,12 @@ The `training/` directory provides a transfer-learning pipeline for future model
 - held-out test metrics,
 - referral-threshold selection,
 - subgroup checks where metadata exists,
-- a completed model card in `docs/MODEL_CARD.md`,
+- a short release note in `docs/EXPERIMENTAL_MODEL_RESULTS.md`,
 - and an Android inference update if tensor shapes or label order change.
 
 For this app's low-resource narrative, small transfer-learned and quantized models are a better fit than training large models from scratch.
 
-See `docs/DATASET_SELECTION.md` for the current dataset-fit decision. In short: skin replacement training is plausible with ISIC-style data, but eye replacement training is blocked until the eye capture modality is clarified.
+The current experimental model metrics live in `docs/EXPERIMENTAL_MODEL_RESULTS.md`.
 
 ## Safety Boundary
 

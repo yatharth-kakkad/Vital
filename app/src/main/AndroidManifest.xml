@@ -12,9 +12,7 @@
     </queries>
 
     <application
-        android:allowBackup="true"
-        android:dataExtractionRules="@xml/data_extraction_rules"
-        android:fullBackupContent="@xml/backup_rules"
+        android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
@@ -32,11 +30,10 @@
             </intent-filter>
         </activity>
 
-        <!-- CropImageActivity with ActionBar theme allowing user to confirm crop -->
         <activity
             android:name="com.canhub.cropper.CropImageActivity"
-            android:theme="@style/Theme.AppCompat.Light.DarkActionBar"
             android:exported="false"
+            android:theme="@style/Theme.AppCompat.Light.DarkActionBar"
             tools:replace="android:exported" />
 
         <provider

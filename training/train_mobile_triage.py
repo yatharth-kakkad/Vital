@@ -7,11 +7,7 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 import tensorflow as tf
-from sklearn.metrics import (
-    confusion_matrix,
-    precision_recall_fscore_support,
-    roc_auc_score,
-)
+from sklearn.metrics import confusion_matrix, precision_recall_fscore_support, roc_auc_score
 
 
 IMAGE_SIZE = 224
@@ -39,7 +35,9 @@ def load_manifest(
     frame = pd.read_csv(manifest_path)
     frame["split"] = frame["split"].astype(str).str.lower()
     frame["label"] = frame["label"].astype(str)
-    frame["resolved_path"] = frame["image_path"].astype(str).map(lambda value: resolve_path(value, dataset_root))
+    frame["resolved_path"] = frame["image_path"].astype(str).map(
+        lambda value: resolve_path(value, dataset_root)
+    )
 
     labels = sorted(frame["label"].unique())
     if positive_label and len(labels) == 2:
@@ -103,31 +101,28 @@ def build_model(num_classes: int, dropout: float) -> tuple[tf.keras.Model, tf.ke
 
 
 def compile_model(model: tf.keras.Model, num_classes: int, learning_rate: float) -> None:
-    if num_classes == 2:
-        loss = tf.keras.losses.BinaryCrossentropy()
-        metrics = [
-            tf.keras.metrics.BinaryAccuracy(name="accuracy"),
-            tf.keras.metrics.AUC(name="auroc"),
-            tf.keras.metrics.AUC(curve="PR", name="auprc"),
-        ]
-    else:
-        loss = tf.keras.losses.SparseCategoricalCrossentropy()
-        metrics = [
-            tf.keras.metrics.SparseCategoricalAccuracy(name="accuracy"),
-        ]
-
     model.compile(
         optimizer=tf.keras.optimizers.Adam(learning_rate=learning_rate),
-        loss=loss,
-        metrics=metrics,
+        loss=(
+            tf.keras.losses.BinaryCrossentropy()
+            if num_classes == 2
+            else tf.keras.losses.SparseCategoricalCrossentropy()
+        ),
+        metrics=(
+            [
+                tf.keras.metrics.BinaryAccuracy(name="accuracy"),
+                tf.keras.metrics.AUC(name="auroc"),
+                tf.keras.metrics.AUC(curve="PR", name="auprc"),
+            ]
+            if num_classes == 2
+            else [tf.keras.metrics.SparseCategoricalAccuracy(name="accuracy")]
+        ),
     )
 
 
 def choose_threshold(y_true: np.ndarray, y_score: np.ndarray, min_sensitivity: float) -> float:
-    thresholds = np.linspace(0.05, 0.95, 181)
-    best_threshold = 0.5
-    best_specificity = -1.0
-    for threshold in thresholds:
+    best_threshold, best_specificity = 0.5, -1.0
+    for threshold in np.linspace(0.05, 0.95, 181):
         y_pred = (y_score >= threshold).astype(int)
         tn, fp, fn, tp = confusion_matrix(y_true, y_pred, labels=[0, 1]).ravel()
         sensitivity = tp / (tp + fn) if (tp + fn) else 0.0
@@ -188,8 +183,7 @@ def evaluate_multiclass(model: tf.keras.Model, dataset: tf.data.Dataset, output_
 
 
 def representative_dataset(frame: pd.DataFrame, max_samples: int):
-    sample = frame.head(max_samples)
-    for path in sample["resolved_path"]:
+    for path in frame.head(max_samples)["resolved_path"]:
         image_bytes = tf.io.read_file(path)
         image = tf.io.decode_image(image_bytes, channels=3, expand_animations=False)
         image = tf.image.resize(image, [IMAGE_SIZE, IMAGE_SIZE])
@@ -198,12 +192,13 @@ def representative_dataset(frame: pd.DataFrame, max_samples: int):
 
 
 def export_tflite(model: tf.keras.Model, output_dir: Path, train_frame: pd.DataFrame) -> None:
-    converter = tf.lite.TFLiteConverter.from_keras_model(model)
-    (output_dir / "model_float32.tflite").write_bytes(converter.convert())
-
-    quantized_converter = tf.lite.TFLiteConverter.from_keras_model(model)
-    quantized_converter.optimizations = [tf.lite.Optimize.DEFAULT]
-    (output_dir / "model_dynamic_range.tflite").write_bytes(quantized_converter.convert())
+    for name, optimizations in {
+        "model_float32.tflite": [],
+        "model_dynamic_range.tflite": [tf.lite.Optimize.DEFAULT],
+    }.items():
+        converter = tf.lite.TFLiteConverter.from_keras_model(model)
+        converter.optimizations = optimizations
+        (output_dir / name).write_bytes(converter.convert())
 
     int8_converter = tf.lite.TFLiteConverter.from_keras_model(model)
     int8_converter.optimizations = [tf.lite.Optimize.DEFAULT]

@@ -29,8 +29,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -80,7 +78,7 @@ import kotlin.system.measureTimeMillis
 
 private const val IMAGE_SIZE = 224
 private const val FILE_PROVIDER_AUTHORITY = "com.example.detector.provider"
-private const val SKIN_REFERRAL_THRESHOLD = 0.405f
+private const val SKIN_REFERRAL_THRESHOLD = 0.715f
 
 enum class AnalysisMode(val label: String) {
     SKIN("Skin"),
@@ -223,10 +221,7 @@ fun DetectorScreen(
                 } else {
                     var score = 0f
                     val elapsedMs = measureTimeMillis {
-                        score = when (mode) {
-                            AnalysisMode.SKIN -> runSkinModel(context, bitmap)
-                            AnalysisMode.EYE -> runEyeModel(context, bitmap)
-                        }
+                        score = runModel(context, bitmap, mode)
                     }
                     AnalysisResult(mode = mode, score = score, elapsedMs = elapsedMs)
                 }
@@ -263,7 +258,6 @@ fun DetectorScreen(
                 onAnalyzeSkin = { analyze(AnalysisMode.SKIN) },
                 onAnalyzeEye = { analyze(AnalysisMode.EYE) }
             )
-            FieldNotes()
         }
     }
 }
@@ -285,11 +279,6 @@ private fun AppHeader() {
             text = "Offline disease screening for low-resource clinics",
             style = MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.onBackground
-        )
-        Text(
-            text = "Runs local skin and eye models on a 224 x 224 crop, keeping images on device for use where bandwidth, privacy, and hardware are constrained.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
 }
@@ -346,46 +335,39 @@ private fun ActionPanel(
     onAnalyzeSkin: () -> Unit,
     onAnalyzeEye: () -> Unit
 ) {
-    Card(
+    Column(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(8.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+        Button(
+            onClick = onCapture,
+            enabled = !isAnalyzing,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(52.dp),
+            shape = RoundedCornerShape(6.dp)
         ) {
-            Button(
-                onClick = onCapture,
-                enabled = !isAnalyzing,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(52.dp),
-                shape = RoundedCornerShape(6.dp)
-            ) {
-                Text(
-                    text = if (hasImage) "Retake Photo" else "Take Photo",
-                    fontWeight = FontWeight.SemiBold
-                )
-            }
+            Text(
+                text = if (hasImage) "Retake Photo" else "Take Photo",
+                fontWeight = FontWeight.SemiBold
+            )
+        }
 
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                AnalysisButton(
-                    label = "Skin",
-                    isLoading = activeMode == AnalysisMode.SKIN,
-                    enabled = hasImage && !isAnalyzing,
-                    onClick = onAnalyzeSkin,
-                    modifier = Modifier.weight(1f)
-                )
-                AnalysisButton(
-                    label = "Eye",
-                    isLoading = activeMode == AnalysisMode.EYE,
-                    enabled = hasImage && !isAnalyzing,
-                    onClick = onAnalyzeEye,
-                    modifier = Modifier.weight(1f)
-                )
-            }
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            AnalysisButton(
+                label = "Skin",
+                isLoading = activeMode == AnalysisMode.SKIN,
+                enabled = hasImage && !isAnalyzing,
+                onClick = onAnalyzeSkin,
+                modifier = Modifier.weight(1f)
+            )
+            AnalysisButton(
+                label = "Eye",
+                isLoading = activeMode == AnalysisMode.EYE,
+                enabled = hasImage && !isAnalyzing,
+                onClick = onAnalyzeEye,
+                modifier = Modifier.weight(1f)
+            )
         }
     }
 }
@@ -414,26 +396,6 @@ private fun AnalysisButton(
             Spacer(modifier = Modifier.width(8.dp))
         }
         Text(if (isLoading) "Running" else "Analyze $label")
-    }
-}
-
-@Composable
-private fun FieldNotes() {
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(6.dp)
-    ) {
-        Text(
-            text = "Deployment constraints",
-            style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.primary,
-            fontWeight = FontWeight.SemiBold
-        )
-        Text(
-            text = "No network call is made during inference. The fixed crop keeps memory predictable for decade-old Android devices, and the result is a triage signal rather than a diagnosis.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
     }
 }
 
@@ -526,43 +488,30 @@ private fun assessmentFor(score: Float): Assessment = when {
     )
 }
 
-fun runSkinModel(context: Context, bitmap: Bitmap): Float {
-    var skinTriage: SkinTriage? = null
-
-    return try {
-        val image = bitmap.toTensorImage()
-        skinTriage = SkinTriage.newInstance(context)
-        val referralProbability = skinTriage
-            .process(image.tensorBuffer)
-            .outputFeature0AsTensorBuffer
-            .floatArray
-            .firstOrNull()
-            ?: 0f
-
-        ((referralProbability.coerceIn(0f, 1f) / SKIN_REFERRAL_THRESHOLD) * 5f).coerceIn(0f, 10f)
-    } catch (e: Exception) {
-        e.printStackTrace()
-        0f
-    } finally {
-        skinTriage?.close()
+fun runModel(context: Context, bitmap: Bitmap, mode: AnalysisMode): Float = try {
+    val input = bitmap.toTensorImage().tensorBuffer
+    when (mode) {
+        AnalysisMode.SKIN -> {
+            val model = SkinTriage.newInstance(context)
+            try {
+                val probability = model.process(input).outputFeature0AsTensorBuffer.floatArray.firstOrNull() ?: 0f
+                ((probability.coerceIn(0f, 1f) / SKIN_REFERRAL_THRESHOLD) * 5f).coerceIn(0f, 10f)
+            } finally {
+                model.close()
+            }
+        }
+        AnalysisMode.EYE -> {
+            val model = Eyescorer.newInstance(context)
+            try {
+                weightedSum(model.process(input).outputFeature0AsTensorBuffer.floatArray, floatArrayOf(7f, 9f, 8f, 0f))
+            } finally {
+                model.close()
+            }
+        }
     }
-}
-
-fun runEyeModel(context: Context, bitmap: Bitmap): Float {
-    var eyeScorer: Eyescorer? = null
-
-    return try {
-        val eyeTensorImage = bitmap.toTensorImage()
-        eyeScorer = Eyescorer.newInstance(context)
-        val eyeScores = eyeScorer.process(eyeTensorImage.tensorBuffer).outputFeature0AsTensorBuffer.floatArray
-
-        weightedSum(eyeScores, floatArrayOf(7f, 9f, 8f, 0f))
-    } catch (e: Exception) {
-        e.printStackTrace()
-        0f
-    } finally {
-        eyeScorer?.close()
-    }
+} catch (e: Exception) {
+    e.printStackTrace()
+    0f
 }
 
 private fun Bitmap.toTensorImage(): TensorImage {
@@ -570,7 +519,7 @@ private fun Bitmap.toTensorImage(): TensorImage {
         .add(ResizeOp(IMAGE_SIZE, IMAGE_SIZE, ResizeOp.ResizeMethod.BILINEAR))
         .build()
 
-    var image = TensorImage(DataType.FLOAT32)
+    val image = TensorImage(DataType.FLOAT32)
     image.load(this)
     return processor.process(image)
 }
