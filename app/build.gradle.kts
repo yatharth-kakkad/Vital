@@ -8,11 +8,10 @@ android {
     namespace = "com.example.detector"
     compileSdk {
         version = release(36)
-
     }
 
     defaultConfig {
-        applicationId = "com.example.skincancerdetector"
+        applicationId = "com.example.vital"
         minSdk = 21
         targetSdk = 36
         versionCode = 1

@@ -77,9 +77,10 @@ This model now uses the exact same binary referral architecture and training scr
 
 ## App Scoring
 
-Both analysis paths now share one scoring function. The Android app scales each model's referral probability so its own selected threshold maps to score 5 on the existing 0-10 presentation:
+Both analysis paths share one assessment function (`assessmentFor` in `MainActivity.kt`). The app shows the model's raw referral probability directly and buckets it against that model's own selected threshold, with a +/-5 percentage point review margin around the threshold:
 
-- Skin: referral probability is scaled so the selected 0.715 referral threshold maps to score 5.
-- Eye: referral probability is scaled so the selected 0.515 referral threshold maps to score 5.
+- `probability >= threshold + 0.05` -> high-priority referral
+- `probability >= threshold - 0.05` -> repeat or review
+- otherwise -> lower signal
 
-This keeps the app's existing lower/borderline/elevated result flow intact while giving both models an identical referral-oriented contract.
+Each `AnalysisMode` (`SKIN`, `EYE`) carries its own `referralThreshold`, so adding a third modality only means adding an enum entry plus its threshold.

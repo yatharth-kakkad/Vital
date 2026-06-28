@@ -73,21 +73,21 @@ import org.tensorflow.lite.support.image.ImageProcessor
 import org.tensorflow.lite.support.image.TensorImage
 import org.tensorflow.lite.support.image.ops.ResizeOp
 import java.io.File
+import kotlin.math.roundToInt
 import kotlin.system.measureTimeMillis
 
 private const val IMAGE_SIZE = 224
 private const val FILE_PROVIDER_AUTHORITY = "com.example.detector.provider"
-private const val SKIN_REFERRAL_THRESHOLD = 0.715f
-private const val EYE_REFERRAL_THRESHOLD = 0.515f
+private const val REVIEW_MARGIN = 0.05f
 
-enum class AnalysisMode(val label: String) {
-    SKIN("Skin"),
-    EYE("Eye")
+enum class AnalysisMode(val label: String, val referralThreshold: Float) {
+    SKIN("Skin", referralThreshold = 0.715f),
+    EYE("Eye", referralThreshold = 0.515f)
 }
 
 data class AnalysisResult(
     val mode: AnalysisMode,
-    val score: Float,
+    val probability: Float,
     val elapsedMs: Long
 )
 
@@ -111,15 +111,15 @@ class MainActivity : ComponentActivity() {
                                 createTempImageUri().also { tempImageUri = it }
                             },
                             onAnalysisComplete = { result ->
-                                navController.navigate("result/${result.mode.name}/${result.score}/${result.elapsedMs}")
+                                navController.navigate("result/${result.mode.name}/${result.probability}/${result.elapsedMs}")
                             }
                         )
                     }
                     composable(
-                        route = "result/{mode}/{score}/{elapsedMs}",
+                        route = "result/{mode}/{probability}/{elapsedMs}",
                         arguments = listOf(
                             navArgument("mode") { type = NavType.StringType },
-                            navArgument("score") { type = NavType.FloatType },
+                            navArgument("probability") { type = NavType.FloatType },
                             navArgument("elapsedMs") { type = NavType.LongType }
                         )
                     ) { backStackEntry ->
@@ -129,7 +129,7 @@ class MainActivity : ComponentActivity() {
                             ?: AnalysisMode.SKIN
                         val result = AnalysisResult(
                             mode = mode,
-                            score = backStackEntry.arguments?.getFloat("score") ?: 0f,
+                            probability = backStackEntry.arguments?.getFloat("probability") ?: 0f,
                             elapsedMs = backStackEntry.arguments?.getLong("elapsedMs") ?: 0L
                         )
 
@@ -219,11 +219,11 @@ fun DetectorScreen(
                 if (bitmap == null) {
                     null
                 } else {
-                    var score = 0f
+                    var probability = 0f
                     val elapsedMs = measureTimeMillis {
-                        score = runModel(context, bitmap, mode)
+                        probability = referralProbability(context, bitmap, mode)
                     }
-                    AnalysisResult(mode = mode, score = score, elapsedMs = elapsedMs)
+                    AnalysisResult(mode = mode, probability = probability, elapsedMs = elapsedMs)
                 }
             }
 
@@ -401,7 +401,7 @@ private fun AnalysisButton(
 
 @Composable
 fun ResultScreen(result: AnalysisResult, onBack: () -> Unit) {
-    val assessment = assessmentFor(result.score)
+    val assessment = assessmentFor(result.probability, result.mode.referralThreshold)
 
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -423,13 +423,13 @@ fun ResultScreen(result: AnalysisResult, onBack: () -> Unit) {
             )
             Spacer(Modifier.height(16.dp))
             Text(
-                text = "%.2f".format(result.score),
+                text = "${(result.probability * 100).roundToInt()}%",
                 fontSize = 58.sp,
                 color = Color.White,
                 fontWeight = FontWeight.ExtraBold
             )
             Text(
-                text = "local inference in ${result.elapsedMs} ms",
+                text = "referral probability · local inference in ${result.elapsedMs} ms",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -470,15 +470,15 @@ private data class Assessment(
     val color: Color
 )
 
-private fun assessmentFor(score: Float): Assessment = when {
-    score >= 5f -> Assessment(
+private fun assessmentFor(probability: Float, referralThreshold: Float): Assessment = when {
+    probability >= referralThreshold + REVIEW_MARGIN -> Assessment(
         title = "High-priority referral",
         message = "The local model produced an elevated signal. Treat this as a reason to seek qualified clinical review, not as a diagnosis.",
         color = Color(0xFFFFB4AB)
     )
-    score >= 4f -> Assessment(
+    probability >= referralThreshold - REVIEW_MARGIN -> Assessment(
         title = "Repeat or review",
-        message = "The model output is near the caution range. Retake the image in better lighting or route the case for clinical review.",
+        message = "The model output is near the referral threshold. Retake the image in better lighting or route the case for clinical review.",
         color = Color(0xFFFFD166)
     )
     else -> Assessment(
@@ -488,34 +488,21 @@ private fun assessmentFor(score: Float): Assessment = when {
     )
 }
 
-fun runModel(context: Context, bitmap: Bitmap, mode: AnalysisMode): Float = try {
+private fun referralProbability(context: Context, bitmap: Bitmap, mode: AnalysisMode): Float = try {
     val input = bitmap.toTensorImage().tensorBuffer
-    val (probability, referralThreshold) = when (mode) {
-        AnalysisMode.SKIN -> {
-            val model = SkinTriage.newInstance(context)
-            try {
-                model.process(input).outputFeature0AsTensorBuffer.floatArray.firstOrNull() ?: 0f
-            } finally {
-                model.close()
-            } to SKIN_REFERRAL_THRESHOLD
-        }
-        AnalysisMode.EYE -> {
-            val model = Eyescorer.newInstance(context)
-            try {
-                model.process(input).outputFeature0AsTensorBuffer.floatArray.firstOrNull() ?: 0f
-            } finally {
-                model.close()
-            } to EYE_REFERRAL_THRESHOLD
-        }
-    }
-    referralScore(probability, referralThreshold)
+    when (mode) {
+        AnalysisMode.SKIN -> closing(SkinTriage.newInstance(context), SkinTriage::close) { it.process(input).outputFeature0AsTensorBuffer }
+        AnalysisMode.EYE -> closing(Eyescorer.newInstance(context), Eyescorer::close) { it.process(input).outputFeature0AsTensorBuffer }
+    }.floatArray.firstOrNull() ?: 0f
 } catch (e: Exception) {
     e.printStackTrace()
     0f
 }
 
-private fun referralScore(probability: Float, referralThreshold: Float): Float {
-    return ((probability.coerceIn(0f, 1f) / referralThreshold) * 5f).coerceIn(0f, 10f)
+private inline fun <M, R> closing(model: M, close: (M) -> Unit, use: (M) -> R): R = try {
+    use(model)
+} finally {
+    close(model)
 }
 
 private fun Bitmap.toTensorImage(): TensorImage {
