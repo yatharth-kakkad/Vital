@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools"
-    package="com.example.detector">
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-feature android:name="android.hardware.camera" android:required="true" />
     <uses-permission android:name="android.permission.CAMERA" />
@@ -37,7 +36,8 @@
         <activity
             android:name="com.canhub.cropper.CropImageActivity"
             android:theme="@style/Theme.AppCompat.Light.DarkActionBar"
-            android:exported="false" />
+            android:exported="false"
+            tools:replace="android:exported" />
 
         <provider
             android:name="androidx.core.content.FileProvider"
@@ -50,7 +50,4 @@
         </provider>
 
     </application>
-
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" tools:node="remove"/>
-
 </manifest>

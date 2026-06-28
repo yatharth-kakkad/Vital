@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -30,6 +31,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
@@ -38,6 +40,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -67,6 +70,9 @@ import com.example.detector.ml.Predictor
 import com.example.detector.ml.ScorerMob
 import com.example.detector.ml.ScorerRes
 import com.example.detector.ui.theme.DetectorTheme
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.tensorflow.lite.DataType
 import org.tensorflow.lite.support.common.ops.NormalizeOp
 import org.tensorflow.lite.support.image.ImageProcessor
@@ -75,6 +81,7 @@ import org.tensorflow.lite.support.image.ops.ResizeOp
 import org.tensorflow.lite.support.tensorbuffer.TensorBuffer
 import java.io.File
 import kotlin.math.min
+import kotlin.system.measureTimeMillis
 
 private const val IMAGE_SIZE = 224
 private const val FILE_PROVIDER_AUTHORITY = "com.example.detector.provider"
@@ -83,6 +90,12 @@ enum class AnalysisMode(val label: String) {
     SKIN("Skin"),
     EYE("Eye")
 }
+
+data class AnalysisResult(
+    val mode: AnalysisMode,
+    val score: Float,
+    val elapsedMs: Long
+)
 
 class MainActivity : ComponentActivity() {
     private lateinit var tempImageUri: Uri
@@ -103,25 +116,30 @@ class MainActivity : ComponentActivity() {
                             onCreateTempUri = {
                                 createTempImageUri().also { tempImageUri = it }
                             },
-                            onAnalysisComplete = { mode, score ->
-                                navController.navigate("result/${mode.name}/$score")
+                            onAnalysisComplete = { result ->
+                                navController.navigate("result/${result.mode.name}/${result.score}/${result.elapsedMs}")
                             }
                         )
                     }
                     composable(
-                        route = "result/{mode}/{score}",
+                        route = "result/{mode}/{score}/{elapsedMs}",
                         arguments = listOf(
                             navArgument("mode") { type = NavType.StringType },
-                            navArgument("score") { type = NavType.FloatType }
+                            navArgument("score") { type = NavType.FloatType },
+                            navArgument("elapsedMs") { type = NavType.LongType }
                         )
                     ) { backStackEntry ->
                         val mode = backStackEntry.arguments
                             ?.getString("mode")
                             ?.let { runCatching { AnalysisMode.valueOf(it) }.getOrNull() }
                             ?: AnalysisMode.SKIN
-                        val score = backStackEntry.arguments?.getFloat("score") ?: 0f
+                        val result = AnalysisResult(
+                            mode = mode,
+                            score = backStackEntry.arguments?.getFloat("score") ?: 0f,
+                            elapsedMs = backStackEntry.arguments?.getLong("elapsedMs") ?: 0L
+                        )
 
-                        ResultScreen(mode = mode, score = score, onBack = navController::popBackStack)
+                        ResultScreen(result = result, onBack = navController::popBackStack)
                     }
                 }
             }
@@ -138,29 +156,28 @@ class MainActivity : ComponentActivity() {
 fun DetectorScreen(
     tempImageUri: Uri,
     onCreateTempUri: () -> Uri,
-    onAnalysisComplete: (AnalysisMode, Float) -> Unit
+    onAnalysisComplete: (AnalysisResult) -> Unit
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var croppedImageUri by remember { mutableStateOf<Uri?>(null) }
     var captureUri by remember(tempImageUri) { mutableStateOf(tempImageUri) }
+    var activeMode by remember { mutableStateOf<AnalysisMode?>(null) }
+    val isAnalyzing = activeMode != null
 
-    fun launchCrop(uri: Uri, launcher: androidx.activity.compose.ManagedActivityResultLauncher<CropImageContractOptions, CropImageView.CropResult>) {
-        launcher.launch(
-            CropImageContractOptions(
-                uri = uri,
-                cropImageOptions = CropImageOptions(
-                    guidelines = CropImageView.Guidelines.ON,
-                    aspectRatioX = IMAGE_SIZE,
-                    aspectRatioY = IMAGE_SIZE,
-                    outputRequestWidth = IMAGE_SIZE,
-                    outputRequestHeight = IMAGE_SIZE,
-                    outputRequestSizeOptions = CropImageView.RequestSizeOptions.RESIZE_EXACT,
-                    fixAspectRatio = true,
-                    cropShape = CropImageView.CropShape.RECTANGLE
-                )
-            )
+    fun cropOptions(uri: Uri) = CropImageContractOptions(
+        uri = uri,
+        cropImageOptions = CropImageOptions(
+            guidelines = CropImageView.Guidelines.ON,
+            aspectRatioX = IMAGE_SIZE,
+            aspectRatioY = IMAGE_SIZE,
+            outputRequestWidth = IMAGE_SIZE,
+            outputRequestHeight = IMAGE_SIZE,
+            outputRequestSizeOptions = CropImageView.RequestSizeOptions.RESIZE_EXACT,
+            fixAspectRatio = true,
+            cropShape = CropImageView.CropShape.RECTANGLE
         )
-    }
+    )
 
     val cropImageLauncher = rememberLauncherForActivityResult(CropImageContract()) { result ->
         if (result.isSuccessful) {
@@ -172,7 +189,7 @@ fun DetectorScreen(
 
     val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { success ->
         if (success) {
-            launchCrop(captureUri, cropImageLauncher)
+            cropImageLauncher.launch(cropOptions(captureUri))
         } else {
             Toast.makeText(context, "No image was captured.", Toast.LENGTH_SHORT).show()
         }
@@ -201,17 +218,31 @@ fun DetectorScreen(
             return
         }
 
-        val bitmap = context.decodeBitmap(imageUri)
-        if (bitmap == null) {
-            Toast.makeText(context, "Could not read the selected image.", Toast.LENGTH_SHORT).show()
-            return
-        }
+        activeMode = mode
+        scope.launch {
+            val result = withContext(Dispatchers.Default) {
+                val bitmap = context.decodeBitmap(imageUri)
+                if (bitmap == null) {
+                    null
+                } else {
+                    var score = 0f
+                    val elapsedMs = measureTimeMillis {
+                        score = when (mode) {
+                            AnalysisMode.SKIN -> runSkinModel(context, bitmap)
+                            AnalysisMode.EYE -> runEyeModel(context, bitmap)
+                        }
+                    }
+                    AnalysisResult(mode = mode, score = score, elapsedMs = elapsedMs)
+                }
+            }
 
-        val score = when (mode) {
-            AnalysisMode.SKIN -> runSkinModel(context, bitmap)
-            AnalysisMode.EYE -> runEyeModel(context, bitmap)
+            activeMode = null
+            if (result == null) {
+                Toast.makeText(context, "Could not read the selected image.", Toast.LENGTH_SHORT).show()
+            } else {
+                onAnalysisComplete(result)
+            }
         }
-        onAnalysisComplete(mode, score)
     }
 
     Surface(
@@ -222,18 +253,21 @@ fun DetectorScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 24.dp, vertical = 28.dp),
-            verticalArrangement = Arrangement.spacedBy(24.dp),
+                .padding(horizontal = 20.dp, vertical = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             AppHeader()
             ImagePreview(imageUri = croppedImageUri, context = context)
             ActionPanel(
                 hasImage = croppedImageUri != null,
+                isAnalyzing = isAnalyzing,
+                activeMode = activeMode,
                 onCapture = ::startCapture,
                 onAnalyzeSkin = { analyze(AnalysisMode.SKIN) },
                 onAnalyzeEye = { analyze(AnalysisMode.EYE) }
             )
+            FieldNotes()
         }
     }
 }
@@ -243,7 +277,7 @@ private fun AppHeader() {
     Column(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.Start,
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+        verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         Text(
             text = "Vital",
@@ -252,12 +286,12 @@ private fun AppHeader() {
             color = MaterialTheme.colorScheme.primary
         )
         Text(
-            text = "Camera-based skin and eye screening prototype",
+            text = "Offline disease screening for low-resource clinics",
             style = MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.onBackground
         )
         Text(
-            text = "Capture a clear, well-lit close-up, crop it to the area of concern, then run one of the on-device TensorFlow Lite models.",
+            text = "Runs local skin and eye models on a 224 x 224 crop, keeping images on device for use where bandwidth, privacy, and hardware are constrained.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -266,13 +300,11 @@ private fun AppHeader() {
 
 @Composable
 private fun ImagePreview(imageUri: Uri?, context: Context) {
-    val previewShape = RoundedCornerShape(28.dp)
-
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(340.dp)
-            .clip(previewShape)
+            .height(300.dp)
+            .clip(RoundedCornerShape(10.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.28f)),
         contentAlignment = Alignment.Center
     ) {
@@ -290,7 +322,8 @@ private fun ImagePreview(imageUri: Uri?, context: Context) {
         } else {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.padding(24.dp)
             ) {
                 Text(
                     text = "No image selected",
@@ -298,7 +331,7 @@ private fun ImagePreview(imageUri: Uri?, context: Context) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Text(
-                    text = "Use the camera to add a 224 x 224 crop.",
+                    text = "Take a close, well-lit photo and crop the relevant region.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
                     textAlign = TextAlign.Center
@@ -311,26 +344,29 @@ private fun ImagePreview(imageUri: Uri?, context: Context) {
 @Composable
 private fun ActionPanel(
     hasImage: Boolean,
+    isAnalyzing: Boolean,
+    activeMode: AnalysisMode?,
     onCapture: () -> Unit,
     onAnalyzeSkin: () -> Unit,
     onAnalyzeEye: () -> Unit
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(8.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
         Column(
-            modifier = Modifier.padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             Button(
                 onClick = onCapture,
+                enabled = !isAnalyzing,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(54.dp),
-                shape = RoundedCornerShape(14.dp)
+                    .height(52.dp),
+                shape = RoundedCornerShape(6.dp)
             ) {
                 Text(
                     text = if (hasImage) "Retake Photo" else "Take Photo",
@@ -338,33 +374,76 @@ private fun ActionPanel(
                 )
             }
 
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedButton(
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                AnalysisButton(
+                    label = "Skin",
+                    isLoading = activeMode == AnalysisMode.SKIN,
+                    enabled = hasImage && !isAnalyzing,
                     onClick = onAnalyzeSkin,
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(52.dp),
-                    shape = RoundedCornerShape(14.dp)
-                ) {
-                    Text("Analyze Skin")
-                }
-                OutlinedButton(
+                    modifier = Modifier.weight(1f)
+                )
+                AnalysisButton(
+                    label = "Eye",
+                    isLoading = activeMode == AnalysisMode.EYE,
+                    enabled = hasImage && !isAnalyzing,
                     onClick = onAnalyzeEye,
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(52.dp),
-                    shape = RoundedCornerShape(14.dp)
-                ) {
-                    Text("Analyze Eye")
-                }
+                    modifier = Modifier.weight(1f)
+                )
             }
         }
     }
 }
 
 @Composable
-fun ResultScreen(mode: AnalysisMode, score: Float, onBack: () -> Unit) {
-    val assessment = assessmentFor(score)
+private fun AnalysisButton(
+    label: String,
+    isLoading: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    OutlinedButton(
+        onClick = onClick,
+        enabled = enabled || isLoading,
+        modifier = modifier.height(50.dp),
+        shape = RoundedCornerShape(6.dp)
+    ) {
+        if (isLoading) {
+            CircularProgressIndicator(
+                modifier = Modifier
+                    .height(18.dp)
+                    .width(18.dp),
+                strokeWidth = 2.dp
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+        }
+        Text(if (isLoading) "Running" else "Analyze $label")
+    }
+}
+
+@Composable
+private fun FieldNotes() {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Text(
+            text = "Deployment constraints",
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.primary,
+            fontWeight = FontWeight.SemiBold
+        )
+        Text(
+            text = "No network call is made during inference. The fixed crop keeps memory predictable for decade-old Android devices, and the result is a triage signal rather than a diagnosis.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
+fun ResultScreen(result: AnalysisResult, onBack: () -> Unit) {
+    val assessment = assessmentFor(result.score)
 
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -373,25 +452,30 @@ fun ResultScreen(mode: AnalysisMode, score: Float, onBack: () -> Unit) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(28.dp),
+                .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
             Text(
-                text = "${mode.label} Analysis",
+                text = "${result.mode.label} Triage",
                 style = MaterialTheme.typography.headlineMedium,
                 color = MaterialTheme.colorScheme.primary,
                 fontWeight = FontWeight.Bold,
                 textAlign = TextAlign.Center
             )
-            Spacer(Modifier.height(18.dp))
+            Spacer(Modifier.height(16.dp))
             Text(
-                text = "%.2f".format(score),
-                fontSize = 64.sp,
+                text = "%.2f".format(result.score),
+                fontSize = 58.sp,
                 color = Color.White,
                 fontWeight = FontWeight.ExtraBold
             )
-            Spacer(Modifier.height(16.dp))
+            Text(
+                text = "local inference in ${result.elapsedMs} ms",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(18.dp))
             Text(
                 text = assessment.title,
                 style = MaterialTheme.typography.titleLarge,
@@ -407,13 +491,13 @@ fun ResultScreen(mode: AnalysisMode, score: Float, onBack: () -> Unit) {
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth()
             )
-            Spacer(Modifier.height(36.dp))
+            Spacer(Modifier.height(34.dp))
             Button(
                 onClick = onBack,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(54.dp),
-                shape = RoundedCornerShape(14.dp),
+                    .height(52.dp),
+                shape = RoundedCornerShape(6.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
             ) {
                 Text("Analyze Another Image", fontWeight = FontWeight.SemiBold)
@@ -430,59 +514,46 @@ private data class Assessment(
 
 private fun assessmentFor(score: Float): Assessment = when {
     score >= 5f -> Assessment(
-        title = "Elevated signal detected",
-        message = "This prototype found a stronger abnormality signal. Please consult a qualified clinician for a real diagnosis.",
+        title = "High-priority referral",
+        message = "The local model produced an elevated signal. Treat this as a reason to seek qualified clinical review, not as a diagnosis.",
         color = Color(0xFFFFB4AB)
     )
     score >= 4f -> Assessment(
-        title = "Borderline signal",
-        message = "The model output is near the caution range. Retake the photo in better lighting or seek professional guidance.",
+        title = "Repeat or review",
+        message = "The model output is near the caution range. Retake the image in better lighting or route the case for clinical review.",
         color = Color(0xFFFFD166)
     )
     else -> Assessment(
         title = "Lower signal",
-        message = "No significant abnormality was detected by this prototype. Keep monitoring changes and use clinical care for concerns.",
+        message = "No significant abnormality was detected by this prototype. Continue monitoring symptoms and use clinical care for concerns.",
         color = Color(0xFF8EE3C8)
     )
 }
 
 fun runSkinModel(context: Context, bitmap: Bitmap): Float {
+    var dataprep: Dataprep? = null
+    var predictor: Predictor? = null
+    var scorerMob: ScorerMob? = null
+    var scorerRes: ScorerRes? = null
+
     return try {
-        val normalizedProcessor = ImageProcessor.Builder()
-            .add(ResizeOp(IMAGE_SIZE, IMAGE_SIZE, ResizeOp.ResizeMethod.BILINEAR))
-            .add(NormalizeOp(0.0f, 255.0f))
-            .build()
+        val normalizedImage = bitmap.toTensorImage(normalize = true)
+        val scoringImage = bitmap.toTensorImage(normalize = false)
 
-        val scoringProcessor = ImageProcessor.Builder()
-            .add(ResizeOp(IMAGE_SIZE, IMAGE_SIZE, ResizeOp.ResizeMethod.BILINEAR))
-            .build()
-
-        var normalizedImage = TensorImage(DataType.FLOAT32)
-        normalizedImage.load(bitmap)
-        normalizedImage = normalizedProcessor.process(normalizedImage)
-
-        var scoringImage = TensorImage(DataType.FLOAT32)
-        scoringImage.load(bitmap)
-        scoringImage = scoringProcessor.process(scoringImage)
-
-        val dataprep = Dataprep.newInstance(context)
+        dataprep = Dataprep.newInstance(context)
         val embedding = dataprep.process(normalizedImage.tensorBuffer).outputFeature0AsTensorBuffer
-        dataprep.close()
 
         val predictorInput = TensorBuffer.createFixedSize(intArrayOf(1, 512), DataType.FLOAT32)
         predictorInput.loadArray(embedding.floatArray)
 
-        val predictor = Predictor.newInstance(context)
+        predictor = Predictor.newInstance(context)
         val predictorOutput = predictor.process(predictorInput).outputFeature0AsTensorBuffer.floatArray
-        predictor.close()
 
-        val scorerMob = ScorerMob.newInstance(context)
+        scorerMob = ScorerMob.newInstance(context)
         val mobScore = scorerMob.process(scoringImage.tensorBuffer).outputFeature0AsTensorBuffer.floatArray
-        scorerMob.close()
 
-        val scorerRes = ScorerRes.newInstance(context)
+        scorerRes = ScorerRes.newInstance(context)
         val resScore = scorerRes.process(scoringImage.tensorBuffer).outputFeature0AsTensorBuffer.floatArray
-        scorerRes.close()
 
         val scoringTable = floatArrayOf(8f, 3f, 1f, 0f, 22f, 1f, 1f)
         val weightedMob = weightedSum(mobScore, scoringTable)
@@ -493,28 +564,42 @@ fun runSkinModel(context: Context, bitmap: Bitmap): Float {
     } catch (e: Exception) {
         e.printStackTrace()
         0f
+    } finally {
+        dataprep?.close()
+        predictor?.close()
+        scorerMob?.close()
+        scorerRes?.close()
     }
 }
 
 fun runEyeModel(context: Context, bitmap: Bitmap): Float {
+    var eyeScorer: Eyescorer? = null
+
     return try {
-        val eyeImageProcessor = ImageProcessor.Builder()
-            .add(ResizeOp(IMAGE_SIZE, IMAGE_SIZE, ResizeOp.ResizeMethod.BILINEAR))
-            .build()
-
-        var eyeTensorImage = TensorImage(DataType.FLOAT32)
-        eyeTensorImage.load(bitmap)
-        eyeTensorImage = eyeImageProcessor.process(eyeTensorImage)
-
-        val eyeScorer = Eyescorer.newInstance(context)
+        val eyeTensorImage = bitmap.toTensorImage(normalize = false)
+        eyeScorer = Eyescorer.newInstance(context)
         val eyeScores = eyeScorer.process(eyeTensorImage.tensorBuffer).outputFeature0AsTensorBuffer.floatArray
-        eyeScorer.close()
 
         weightedSum(eyeScores, floatArrayOf(5f, 10f, 1f, 8f))
     } catch (e: Exception) {
         e.printStackTrace()
         0f
+    } finally {
+        eyeScorer?.close()
     }
+}
+
+private fun Bitmap.toTensorImage(normalize: Boolean): TensorImage {
+    val processorBuilder = ImageProcessor.Builder()
+        .add(ResizeOp(IMAGE_SIZE, IMAGE_SIZE, ResizeOp.ResizeMethod.BILINEAR))
+
+    if (normalize) {
+        processorBuilder.add(NormalizeOp(0.0f, 255.0f))
+    }
+
+    var image = TensorImage(DataType.FLOAT32)
+    image.load(this)
+    return processorBuilder.build().process(image)
 }
 
 private fun weightedSum(scores: FloatArray, weights: FloatArray): Float {

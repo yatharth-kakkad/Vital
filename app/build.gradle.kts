@@ -13,7 +13,7 @@ android {
 
     defaultConfig {
         applicationId = "com.example.skincancerdetector"
-        minSdk = 24
+        minSdk = 21
         targetSdk = 36
         versionCode = 1
         versionName = "1.0"
@@ -54,6 +54,7 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.navigation.compose)
+    implementation(libs.kotlinx.coroutines.android)
     implementation(libs.android.image.cropper)
     implementation(libs.tensorflow.lite.support)
     implementation(libs.tensorflow.lite.metadata)
