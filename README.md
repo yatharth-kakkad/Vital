@@ -12,9 +12,9 @@ Many health tools quietly assume reliable broadband, current phones, and easy ac
 
 - Fully local inference; captured images are not uploaded.
 - Fixed 224 x 224 crop flow to match model input and control memory use.
-- Separate skin and eye analysis paths backed by bundled `.tflite` models.
+- Separate skin and eye analysis paths backed by bundled `.tflite` models, both using the same binary referral architecture.
 - Background inference so the UI stays responsive on slower devices.
-- Simple referral-oriented language instead of overclaiming a diagnosis.
+- Simple referral-oriented language instead of overclaiming a diagnosis or per-disease categorization.
 - Minimum SDK 21, targeting Android 5.0+ devices from roughly the last decade.
 
 ## Field Workflow

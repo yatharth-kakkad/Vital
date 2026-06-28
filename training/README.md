@@ -51,6 +51,27 @@ python validate_manifest.py \
 
 `build_skin_manifest.py` maps class folders with referral keywords such as melanoma, basal, carcinoma, or BCC to `referral`; the remaining folders become `lower_signal`. Review the generated `diagnosis` column before training if the dataset changes layout.
 
+For eye triage, use the same approach with the eye disease dataset and build the binary manifest with `build_eye_manifest.py`:
+
+```bash
+python - <<'PY'
+import kagglehub
+print(kagglehub.dataset_download("gunavenkatdoddi/eye-diseases-classification"))
+PY
+
+python build_eye_manifest.py \
+  --dataset-root ~/.cache/kagglehub/datasets/gunavenkatdoddi/eye-diseases-classification/versions/1/dataset \
+  --output manifests/eye_kaggle.csv \
+  --max-per-diagnosis 1100 \
+  --max-per-label 3300
+python validate_manifest.py \
+  --manifest manifests/eye_kaggle.csv \
+  --dataset-root ~/.cache/kagglehub/datasets/gunavenkatdoddi/eye-diseases-classification/versions/1/dataset \
+  --skip-image-check
+```
+
+`build_eye_manifest.py` maps the `normal` class folder to `lower_signal`; the remaining folders (`cataract`, `diabetic_retinopathy`, `glaucoma`) become `referral`. This gives the eye model the same binary referral contract as the skin model instead of a per-disease category output.
+
 For the app narrative, a binary triage dataset is the simplest responsible starting point:
 
 - `lower_signal`
@@ -71,6 +92,18 @@ python train_mobile_triage.py \
   --manifest manifests/skin_kaggle.csv \
   --dataset-root ~/.cache/kagglehub/datasets/ismailpromus/skin-diseases-image-dataset/versions/1/IMG_CLASSES \
   --output-dir runs/skin_baseline \
+  --positive-label referral \
+  --epochs 20 \
+  --fine-tune-epochs 8
+```
+
+The same script trains the eye referral model from the eye manifest, with no code changes:
+
+```bash
+python train_mobile_triage.py \
+  --manifest manifests/eye_kaggle.csv \
+  --dataset-root ~/.cache/kagglehub/datasets/gunavenkatdoddi/eye-diseases-classification/versions/1/dataset \
+  --output-dir runs/eye_referral \
   --positive-label referral \
   --epochs 20 \
   --fine-tune-epochs 8

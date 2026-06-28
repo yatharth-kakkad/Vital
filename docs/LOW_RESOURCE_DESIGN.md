@@ -12,10 +12,10 @@ Vital is framed as a field triage prototype for settings where bandwidth, device
 
 ## Model Pipeline
 
-Both analysis paths use one 224 x 224 crop, one bundled TensorFlow Lite model, and a small score mapping in the app:
+Both analysis paths use one 224 x 224 crop, one bundled TensorFlow Lite model with an identical binary referral contract, and the same score mapping in the app:
 
-- Skin: MobileNetV3Small triage model trained from a balanced subset of `ismailpromus/skin-diseases-image-dataset`; referral probability is scaled against the documented referral threshold.
-- Eye: MobileNetV3Small classifier trained with the same training script and converted to the same dynamic-range TFLite format.
+- Skin: MobileNetV3Small referral model trained from a balanced subset of `ismailpromus/skin-diseases-image-dataset`; referral probability is scaled against the documented referral threshold.
+- Eye: MobileNetV3Small referral model trained the same way from `gunavenkatdoddi/eye-diseases-classification`, collapsing cataract/diabetic retinopathy/glaucoma into `referral` and normal into `lower_signal`; referral probability is scaled against its own documented referral threshold.
 
 The model instances are closed in `finally` blocks so repeated screening sessions do not leak native resources.
 

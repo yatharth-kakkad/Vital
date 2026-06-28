@@ -73,12 +73,12 @@ import org.tensorflow.lite.support.image.ImageProcessor
 import org.tensorflow.lite.support.image.TensorImage
 import org.tensorflow.lite.support.image.ops.ResizeOp
 import java.io.File
-import kotlin.math.min
 import kotlin.system.measureTimeMillis
 
 private const val IMAGE_SIZE = 224
 private const val FILE_PROVIDER_AUTHORITY = "com.example.detector.provider"
 private const val SKIN_REFERRAL_THRESHOLD = 0.715f
+private const val EYE_REFERRAL_THRESHOLD = 0.515f
 
 enum class AnalysisMode(val label: String) {
     SKIN("Skin"),
@@ -490,28 +490,32 @@ private fun assessmentFor(score: Float): Assessment = when {
 
 fun runModel(context: Context, bitmap: Bitmap, mode: AnalysisMode): Float = try {
     val input = bitmap.toTensorImage().tensorBuffer
-    when (mode) {
+    val (probability, referralThreshold) = when (mode) {
         AnalysisMode.SKIN -> {
             val model = SkinTriage.newInstance(context)
             try {
-                val probability = model.process(input).outputFeature0AsTensorBuffer.floatArray.firstOrNull() ?: 0f
-                ((probability.coerceIn(0f, 1f) / SKIN_REFERRAL_THRESHOLD) * 5f).coerceIn(0f, 10f)
+                model.process(input).outputFeature0AsTensorBuffer.floatArray.firstOrNull() ?: 0f
             } finally {
                 model.close()
-            }
+            } to SKIN_REFERRAL_THRESHOLD
         }
         AnalysisMode.EYE -> {
             val model = Eyescorer.newInstance(context)
             try {
-                weightedSum(model.process(input).outputFeature0AsTensorBuffer.floatArray, floatArrayOf(7f, 9f, 8f, 0f))
+                model.process(input).outputFeature0AsTensorBuffer.floatArray.firstOrNull() ?: 0f
             } finally {
                 model.close()
-            }
+            } to EYE_REFERRAL_THRESHOLD
         }
     }
+    referralScore(probability, referralThreshold)
 } catch (e: Exception) {
     e.printStackTrace()
     0f
+}
+
+private fun referralScore(probability: Float, referralThreshold: Float): Float {
+    return ((probability.coerceIn(0f, 1f) / referralThreshold) * 5f).coerceIn(0f, 10f)
 }
 
 private fun Bitmap.toTensorImage(): TensorImage {
@@ -522,14 +526,6 @@ private fun Bitmap.toTensorImage(): TensorImage {
     val image = TensorImage(DataType.FLOAT32)
     image.load(this)
     return processor.process(image)
-}
-
-private fun weightedSum(scores: FloatArray, weights: FloatArray): Float {
-    var total = 0f
-    for (index in 0 until min(scores.size, weights.size)) {
-        total += scores[index] * weights[index]
-    }
-    return total
 }
 
 private fun Context.decodeBitmap(uri: Uri): Bitmap? {

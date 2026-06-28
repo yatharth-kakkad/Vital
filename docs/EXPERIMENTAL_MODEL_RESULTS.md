@@ -1,6 +1,6 @@
 # Experimental Replacement Models
 
-Vital now uses two small transfer-learned TensorFlow Lite models generated through the repo's `training/` scaffold.
+Vital now uses two small transfer-learned TensorFlow Lite models generated through the repo's `training/` scaffold. Both models share the same binary referral architecture: a single sigmoid output trained against a `lower_signal` / `referral` manifest, scored in the app against a referral-friendly threshold selected by the training script.
 
 These models are experimental replacements. They are smaller and easier to reason about than the original bundled models, but they are not clinically validated.
 
@@ -43,41 +43,43 @@ This model uses the same MobileNetV3Small transfer-learning workflow as the eye 
 ## Eye Disease Model
 
 - File: `app/src/main/ml/eyescorer.tflite`
-- Architecture: MobileNetV3Small minimalistic transfer-learning head
-- Dataset: Kaggle `gunavenkatdoddi/eye-diseases-classification`
+- Architecture: MobileNetV3Small minimalistic transfer-learning head (binary referral head, same as the skin model)
+- Dataset target: Kaggle `gunavenkatdoddi/eye-diseases-classification`
+- Manifest builder: `training/build_eye_manifest.py`
 - Labels:
-  - `cataract`
-  - `diabetic_retinopathy`
-  - `glaucoma`
-  - `normal`
+  - `lower_signal`: `normal` class folder
+  - `referral`: `cataract`, `diabetic_retinopathy`, and `glaucoma` class folders
+- Training sample:
+  - Capped at 1,100 images per diagnosis and 3,300 images per binary label
+  - Total rows: 4,217
 - Training split:
-  - Train: 2,953 images
-  - Validation: 633 images
-  - Test: 631 images
+  - Train: 2,948 images
+  - Validation: 613 images
+  - Test: 656 images
 - TFLite export used in app: dynamic-range quantized float-input model
 - Model size: about 536 KB
 
 Held-out test metrics:
 
-- Cataract precision/recall/F1: 0.834 / 0.877 / 0.855
-- Diabetic retinopathy precision/recall/F1: 0.967 / 0.726 / 0.829
-- Glaucoma precision/recall/F1: 0.755 / 0.795 / 0.774
-- Normal precision/recall/F1: 0.694 / 0.801 / 0.744
-- Confusion matrix by class order `[cataract, diabetic_retinopathy, glaucoma, normal]`:
-  - Cataract: 136, 0, 14, 5
-  - Diabetic retinopathy: 2, 119, 5, 38
-  - Glaucoma: 16, 1, 120, 14
-  - Normal: 9, 3, 20, 129
+- AUROC: 0.937
+- Referral threshold selected by script: 0.515
+- Lower-signal precision: 0.765
+- Lower-signal recall: 0.777
+- Referral precision: 0.913
+- Referral recall: 0.907
+- Confusion matrix:
+  - Actual lower-signal: 143 lower-signal, 41 referral
+  - Actual referral: 44 lower-signal, 428 referral
 
 Interpretation:
 
-This model is much smaller than the original eye model and has reasonable experimental test performance on its source dataset. It should still be treated as a dataset-specific model, not a medically validated classifier.
+This model now uses the exact same binary referral architecture and training script as the skin model: any of the three detected eye pathologies in the source dataset (cataract, diabetic retinopathy, glaucoma) is collapsed into a single `referral` class against `normal` as `lower_signal`. It remains an experimental dataset-specific triage model, not a clinically validated diagnostic model, and it no longer reports per-disease categorization — disease-specific risk categorization was intentionally replaced by a referral-oriented binary signal to match the skin model's triage framing.
 
 ## App Scoring
 
-The Android app maps model outputs into the existing 0-10 score presentation:
+Both analysis paths now share one scoring function. The Android app scales each model's referral probability so its own selected threshold maps to score 5 on the existing 0-10 presentation:
 
 - Skin: referral probability is scaled so the selected 0.715 referral threshold maps to score 5.
-- Eye: weighted disease probability score using cataract = 7, diabetic retinopathy = 9, glaucoma = 8, normal = 0.
+- Eye: referral probability is scaled so the selected 0.515 referral threshold maps to score 5.
 
-These weights keep the app's existing lower/borderline/elevated result flow intact while reflecting the new model outputs.
+This keeps the app's existing lower/borderline/elevated result flow intact while giving both models an identical referral-oriented contract.
