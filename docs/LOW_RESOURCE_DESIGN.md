@@ -27,6 +27,19 @@ The model instances are closed in `finally` blocks so repeated screening session
 
 Bundling models makes the APK larger, but it also makes the app independent of network availability. For production deployment, the next step would be evaluating quantized model variants and Git LFS or release assets for model storage.
 
+## Training and Model Replacement
+
+The `training/` directory provides a transfer-learning pipeline for future model improvement. It does not replace the current app models automatically. Any replacement model should include:
+
+- a documented dataset manifest,
+- held-out test metrics,
+- referral-threshold selection,
+- subgroup checks where metadata exists,
+- a completed model card in `docs/MODEL_CARD.md`,
+- and an Android inference update if tensor shapes or label order change.
+
+For this app's low-resource narrative, small transfer-learned and quantized models are a better fit than training large models from scratch.
+
 ## Safety Boundary
 
 The app should be described as disease identification support or triage assistance, not automated diagnosis. Any elevated or uncertain signal should route the patient to a qualified clinician.
